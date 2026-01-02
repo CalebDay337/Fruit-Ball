@@ -3,19 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FruitBall: JUICED</title>
+    <title>FruitBall: CHAMPIONS</title>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; position: fixed; overflow: hidden; background: #1a1a1a; font-family: 'Arial Black', sans-serif; }
-        #ui { position: absolute; width: 100%; top: 20px; color: white; text-align: center; pointer-events: none; text-shadow: 2px 2px #000; }
-        #combo { font-size: 40px; color: #f1c40f; display: none; animation: pop 0.3s ease; }
-        @keyframes pop { 0% { transform: scale(0.5); } 100% { transform: scale(1.2); } }
-        canvas { display: block; background: radial-gradient(circle, #27ae60, #1e8449); touch-action: none; }
+        #ui { position: absolute; width: 100%; top: 20px; color: white; text-align: center; pointer-events: none; z-index: 10; }
+        #stats { display: flex; justify-content: space-around; font-size: 18px; }
+        #boss-hp { width: 200px; height: 12px; background: #444; margin: 10px auto; display: none; border: 2px solid #fff; border-radius: 6px; overflow: hidden; }
+        #hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, #ff4757, #ff6b81); }
+        canvas { display: block; background: #2c3e50; touch-action: none; }
     </style>
 </head>
 <body>
     <div id="ui">
-        <div style="font-size: 20px;">SCORE: <span id="score">0</span></div>
-        <div id="combo">COMBO x2!</div>
+        <div id="stats">
+            <div>SCORE: <span id="score">0</span></div>
+            <div>BEST: <span id="best">0</span></div>
+        </div>
+        <div id="boss-hp"><div id="hp-fill"></div></div>
+        <div id="msg" style="font-size: 28px; color: #f1c40f; margin-top: 10px;"></div>
     </div>
     <canvas id="c"></canvas>
 
@@ -23,82 +28,118 @@
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d');
     const scoreEl = document.getElementById('score');
-    const comboEl = document.getElementById('combo');
+    const bestEl = document.getElementById('best');
+    const hpFill = document.getElementById('hp-fill');
+    const bossBar = document.getElementById('boss-hp');
+    const msg = document.getElementById('msg');
 
-    let score = 0, combo = 0, shake = 0;
-    let particles = [];
+    let score = 0, shake = 0, particles = [];
+    let bossActive = false, bossHP = 100, bossX = 0, bossDir = 4;
+    let highScore = localStorage.getItem('fruitBallBest') || 0;
+    bestEl.innerText = highScore;
 
     function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
     window.addEventListener('resize', resize);
     resize();
 
-    const ball = { x: 200, y: 200, r: 20, dx: 5, dy: 5, e: "🍎" };
-    const paddle = { w: 120, h: 20, x: 0 };
+    const ball = { x: 200, y: 300, r: 20, dx: 6, dy: 6, e: "🍎" };
+    const paddle = { w: 130, h: 22, x: 0 };
 
     window.addEventListener('touchmove', (e) => {
         paddle.x = e.touches[0].clientX - paddle.w/2;
     }, {passive: false});
 
-    function createParticles(x, y) {
-        for(let i=0; i<8; i++) {
-            particles.push({x, y, dx: (Math.random()-0.5)*10, dy: (Math.random()-0.5)*10, life: 20});
-        }
+    function spawnParticles(x, y, color) {
+        for(let i=0; i<12; i++) particles.push({x, y, dx: (Math.random()-0.5)*18, dy: (Math.random()-0.5)*18, life: 30, c: color});
     }
 
     function update() {
         ctx.save();
-        if(shake > 0) {
-            ctx.translate(Math.random()*shake - shake/2, Math.random()*shake - shake/2);
-            shake *= 0.9;
-        }
-
+        if(shake > 0) { ctx.translate(Math.random()*shake - shake/2, Math.random()*shake - shake/2); shake *= 0.85; }
         ctx.clearRect(-100, -100, canvas.width+200, canvas.height+200);
 
-        // Draw Paddle
-        ctx.fillStyle = "#fff";
-        ctx.shadowBlur = 20; ctx.shadowColor = "#fff";
-        ctx.fillRect(paddle.x, canvas.height - 60, paddle.w, paddle.h);
-        ctx.shadowBlur = 0;
-
-        // Draw Ball
-        ctx.font = "40px serif";
-        ctx.fillText(ball.e, ball.x - 20, ball.y + 15);
-
-        // Draw Particles
-        particles.forEach((p, i) => {
-            p.x += p.dx; p.y += p.dy; p.life--;
-            ctx.fillStyle = `rgba(255,255,255,${p.life/20})`;
-            ctx.fillRect(p.x, p.y, 5, 5);
-            if(p.life <= 0) particles.splice(i, 1);
-        });
-
-        ball.x += ball.dx; ball.y += ball.dy;
-
-        if(ball.x < 0 || ball.x > canvas.width) ball.dx *= -1;
-        if(ball.y < 0) ball.dy *= -1;
-
-        // Hit Paddle
-        if(ball.y > canvas.height - 80 && ball.x > paddle.x && ball.x < paddle.x + paddle.w) {
-            ball.dy = -Math.abs(ball.dy) * 1.05; 
-            ball.dx *= 1.02;
-            score += 10 + (combo * 5);
-            combo++;
-            shake = 15;
-            createParticles(ball.x, ball.y);
-            scoreEl.innerText = score;
-            const f = ["🍋","🍉","🍇","🍓","🫐"];
-            ball.e = f[Math.floor(Math.random()*f.length)];
+        // --- BOSS LOGIC (Starts at 300 now so it's faster to find!) ---
+        if(score >= 300 || bossActive) {
+            if(!bossActive) { 
+                bossActive = true; 
+                bossBar.style.display = "block"; 
+                msg.innerText = "GORILLA ATTACK! 🦍"; 
+                setTimeout(()=>msg.innerText="", 2500); 
+            }
+            bossX += bossDir;
+            if(bossX < 0 || bossX > canvas.width - 100) bossDir *= -1;
             
-            if(combo > 1) {
-                comboEl.style.display = "block";
-                comboEl.innerText = "COMBO x" + combo;
+            ctx.font = "90px serif";
+            ctx.shadowBlur = 15; ctx.shadowColor = "red";
+            ctx.fillText("🦍", bossX, 120);
+            ctx.shadowBlur = 0;
+
+            if(ball.y < 130 && ball.x > bossX && ball.x < bossX + 100) {
+                ball.dy = Math.abs(ball.dy) + 1.5; 
+                bossHP -= 5;
+                shake = 25;
+                spawnParticles(ball.x, ball.y, "#ff4757");
+                hpFill.style.width = bossHP + "%";
+                
+                if(bossHP <= 0) {
+                    bossActive = false; bossBar.style.display = "none"; score += 2000;
+                    msg.innerText = "KNOCKOUT! 🏆"; 
+                    setTimeout(()=>msg.innerText="", 3000);
+                    bossHP = 100; hpFill.style.width = "100%";
+                    ball.dy = 6; ball.dx = 6; // Reset speed
+                }
             }
         }
 
-        if(ball.y > canvas.height) {
-            combo = 0;
-            comboEl.style.display = "none";
-            ball.y = 200; ball.dy = 5; ball.dx = 5; // Reset ball
+        // --- PADDLE & BALL ---
+        ctx.fillStyle = "#fff";
+        ctx.shadowBlur = 10; ctx.shadowColor = "#f1c40f";
+        ctx.fillRect(paddle.x, canvas.height - 70, paddle.w, paddle.h);
+        ctx.shadowBlur = 0;
+
+        ctx.font = "45px serif";
+        ctx.fillText(ball.e, ball.x - 22, ball.y + 18);
+
+        particles.forEach((p, i) => {
+            p.x += p.dx; p.y += p.dy; p.life--;
+            ctx.fillStyle = p.c;
+            ctx.globalAlpha = p.life/30;
+            ctx.fillRect(p.x, p.y, 5, 5);
+            if(p.life <= 0) particles.splice(i, 1);
+        });
+        ctx.globalAlpha = 1;
+
+        ball.x += ball.dx; ball.y += ball.dy;
+        if(ball.x < 0 || ball.x > canvas.width) { ball.dx *= -1; shake = 5; }
+        if(ball.y < 0 && !bossActive) ball.dy *= -1;
+
+        // Paddle Hit
+        if(ball.y > canvas.height - 90 && ball.x > paddle.x && ball.x < paddle.x + paddle.w) {
+            ball.dy = -Math.abs(ball.dy);
+            score += 15;
+            scoreEl.innerText = score;
+            if(score > highScore) {
+                highScore = score;
+                localStorage.setItem('fruitBallBest', highScore);
+                bestEl.innerText = highScore;
+            }
+            const f = ["🍎","🍍","🍌","🍓","🥝","🍒"];
+            ball.e = f[Math.floor(Math.random()*f.length)];
+            spawnParticles(ball.x, ball.y, "#fff");
+            shake = 8;
+        }
+
+        // Game Over Reset
+        if(ball.y > canvas.height) { 
+            shake = 30;
+            score = 0; 
+            scoreEl.innerText = score;
+            bossActive = false;
+            bossBar.style.display = "none";
+            ball.y = canvas.height/2; 
+            ball.dy = 6; ball.dx = 6;
+            msg.innerText = "WASTED! 💀";
+            setTimeout(()=>msg.innerText="", 2000);
         }
 
         ctx.restore();
